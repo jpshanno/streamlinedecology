@@ -1,0 +1,254 @@
+---
+output: html_document
+---
+# Creating Publication-Ready Maps in R, Part 1
+
+> The northwestern periphery of the expanding infestation includes areas where black ash (Fraxinus nigra Marsh.) plays an important role on the landscape [7] (Figure 1).  
+
+Shannon, et al (2018), [doi:10.3390/f9030147](https://doi.org/10.3390/f9030147)
+
+When I wrote this sentence I had a map in mind, and I decided it was about time to get maps in R figured out. A little more spcifically, I wanted to make a publication quality map in R. Maps, especially polished ones, are something I had been meaning to learn on R, but always seemed like too much a chore when I needed to get a map done right away. The rest of the publication was written via RMarkdown, so it made sense to do the map that way too. 
+
+I had previously used the `sp` package for spatial data analysis and plotting. I was never completely stratisfied with how `sp` integrated with my regular workflow, especially after I began to more heavily use the tidyverse.  Then in Fall 2018 I came across the package `sf`, which makes working with data, especially tidy data, simple, most of your regular workflow carries right over. So for these maps I'll be using `sf` and other tidy packages. I stuck with `ggplot2` for the plotting because I am already familiar with the syntax and some of the quirks.
+
+```{r Setup, message = FALSE}
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(maps)
+library(readr)
+library(sf)
+library(tidyr)
+```
+
+## Ash on the Landscape
+
+The first step in creating this map was finding the data on the distribution of black ash, and the spread of EAB. Data on the distribution of tree species within the US is available through the US Forest Service. I'm using the Importance Value, which shows how prominent a species on the landscape and can be downloaded [here](https://www.fs.fed.us/nrs/atlas/littlefia/ "Little's Range and Importance Values for Tree Species in the US.").
+
+For more info on Proj4 strings and EPSG codes see [this chapter](https://bookdown.org/robinlovelace/geocompr/spatial-class.html#crs-intro) in Geocomputation with R.
+
+```{r Get-Ash-Importance}
+
+# These data from USFS are in the Albers projection, and we need to define the
+# correct proj4 string, which contains all the projection information for proper
+# spatial processing and mapping.
+
+albers <- 
+  "+proj=aea +lat_1=38 +lat_2=42 +lat_0=40 +lon_0=-82 +ellps=clrk66 +units=m +no_defs"
+
+# Read in the raster data, set all 0 values to NA. And reproject to EPSG 3857,
+# which we will be using for some of the other data.
+
+ash <- 
+  raster::raster("data/FIA/fiaiv543.asc",
+         crs = albers) %>% 
+  raster::calc(., fun = function(x){ifelse(x == 0, NA_real_, x)}) %>% 
+  raster::projectRaster(from = ., 
+                        crs = st_crs(3857)$proj4string)
+
+```
+
+You might notice that I used `raster::` rather than `library(raster)`. `raster` and `dplyr` both have `select` and `filter` functions, which makes for conflicts depending on the order you load the packages. I am only use a few functions from `raster` so I chose to explicity call each function rather than load the library. Now we can take a look at that data and see that there is not much to look at yet, though we can see the rough outline of some northern US states.
+
+```{r Plot-Ash}
+raster::plot(ash)
+```
+
+Because I chose to use `ggplot2` I need to account for it's limitation, you can't plot raster data without converting it to point data. So let's convert it to points using `rasterToPoints()` and set zeros to `NA`.
+
+```{r Raster-To-Points}
+importanceValue <- 
+  ash %>% 
+  raster::rasterToPoints(.) %>% 
+  as_tibble(.) %>% 
+  mutate(importanceValue = ifelse(layer == 0,
+                                  NA_real_,
+                                  layer)) %>%
+  filter(!is.na(importanceValue)) %>% 
+  select(importanceValue,
+         lon = x,
+         lat = y)
+```
+
+## Emerald Ash Borer Detections
+
+The EAB infestation data was requested and downloaded in CSV format from [EDDMaps](http://www.eddmaps.org/, "Early Detection & Distribution Mapping System. The University of Georgia - Center for Invasive Species and Ecosystem Health."). The data were stored as points, and for simplicity I'm using only detection date and coordinates here, which should be familiar to anyone who has collected spatially-linked field data.
+
+The first step is to read in the ash detection coordinates and convert them to an sf object using `st_as_sf()` by specifying the coordinate columns. We specify the supplied CRS info when creating the sf object, and then transform to a CRS that is acceptable for the spatial join we need to do below.
+
+```{r Make-Infestation-Data}
+# Read in the ash detection coordinates and convert them to an sf object by
+# specifying the coordinate columns. We specify the supplied CRS info when
+# creating the sf project, and then transform to a CRS that is acceptable for
+# the spatial join we need to do below.
+
+ashDetections <-
+  read_csv("data/EAB_Detections.csv",
+           col_types = "cnn") %>% 
+  mutate(observedDate = dmy(observedDate),
+         observedYear = year(observedDate)) %>% 
+  st_as_sf(coords = c("lon", "lat"),
+           dim = "XY",
+           crs = 4326) %>% 
+  st_transform(3857)
+
+ashDetections
+
+plot(st_geometry(ashDetections),
+     main = "Reported Detections of EAB",
+     pch = 20)
+```
+
+## County Boundaries
+
+To be useful to us for our map we need to match these detection points to county borders. A map of US counties is avaiable in the `maps` package by calling `map("county")`, the Canadian census division boundaries can be downloaded [here](https://open.canada.ca/data/en/dataset/cc2f27e3-b20f-4472-8a65-13bb7556a658 "Statistics Canada, Census Division Cartographic Boundary Files - 2011 Census") and is what I used to map detections in Canada.
+
+Now let's get the county level data ready to go. For the US counties, `st_as_sf` has a method to work directly on `map` objects, so we just have to call `st_as_sf()` on a map object to get an sf-object containing all of the US counties. Make sure to set `fill = TRUE` in the call to `map` or you will get an error. The downloaded Candian census divisions can be read in directly from the shapefile using `st_read()`. After combining the datasets a call to `st_simplify()` helps to align borders between the US and Canadian polygons. To save on processing we're going to do that after we select only the infested counties below.
+
+```{r County-Data}
+# Extract the county level maps. st_as_sf contains a method for map objects to
+# convert them directly to sf objects.
+
+countiesUS <- 
+  st_as_sf(map("county", 
+               fill = TRUE,
+               plot = FALSE)) %>% 
+  rename(county = ID) %>% 
+  st_transform(3857)
+
+countiesCA <- 
+  st_read("data/Canadian_Census/gcd_000b11a_e.shp", 
+          stringsAsFactors = FALSE, 
+          quiet = TRUE) %>% 
+  rename(county = CDNAME) %>% 
+  select(county) %>% 
+  st_transform(3857)
+
+counties <- 
+  rbind(countiesUS,
+        countiesCA)
+```
+
+Now let's take a look at our new county level map of the US and Canada (this can take a while to draw so feel free to skip doing this if you're following along).
+
+```{r Plot-Counties}
+plot(st_geometry(counties))
+```
+
+## Find the Infested Counties
+
+Now we have everything we need to create a shapefile showing which counties had detected infestations of EAB for any given year. To do this we need to identify every county that contains a detection point from the EDDSMaps data. `sf` contains a set of functions that perform geometric operations such as intersections and differences. But one of our datasets is points, which means we have to use the `st_join()` function and specify that the join we want to use is `st_contains`. The call to `st_join()` returns all of the counties, but we can use `filter()` to extract just the ones that contained a detection point. Our list of counties with EAB detections can then be further reduced to find the earliest detection date for each county.
+
+```{r Create-Infested-Counties-Dataset}
+infestedCounties <- 
+  st_join(counties, 
+          ashDetections, 
+          st_contains) %>% 
+  filter(!is.na(observedYear)) %>% 
+  group_by(county) %>% 
+  filter(observedDate == min(observedDate),
+            observedYear == year(observedDate)) %>% 
+  ungroup() %>% 
+  st_simplify() %>% 
+  distinct()
+
+plot(st_geometry(infestedCounties),
+     col = NA)
+```
+
+Let's save this as a shapefile that we can use later, but first we have to shorten a couple of names so they don't get automatically truncated to match ESRI's requirements.
+
+```{r Plot-Infestation}
+st_write(infestedCounties %>% 
+           rename(obsDate = observedDate, 
+                  obsYear = observedYear), 
+         "output/EAB_Detection_by_County.shp", 
+         delete_layer = TRUE)
+```
+
+## Find the Contiguous Range of EAB
+
+The map we want shows the range of EAB and the Importance Value of black ash. That means we need a single polygon showing the total extent of infested counties. We can generate this for any year by filtering by observedYear and calling `summarize()` on the data. For an sf object `summarize()` will union the polygons to create a single feature. I've added a buffer here so that adjacent counties across a water body are considered contiguous.
+
+```{r 2017-Infestation}
+eabRange2017 <- 
+  infestedCounties %>% 
+  filter(observedYear <= 2017) %>% 
+  st_buffer(dist = 6000) %>%
+  summarize(cumulativeYear = 2017)
+
+plot(st_geometry(eabRange2017))
+```
+
+For this map we want a single polygon to represent the _contiguous_ range of EAB, and this should be the largest polygon. The only problem is that the unioned polygons will have holes where some counties did not have detections. We can make a function to fill those holes by digging into the structure of simple features, for more on the structure see the [vignettes](https://cran.r-project.org/web/packages/sf/vignettes/sf1.html) for the `sf` package. 
+
+```{r Fill-Polygon_Holes}
+st_fill_holes <- 
+  function(x){
+    geom  <-  st_geometry(x)
+    newGeom <-  lapply(seq_along(1:length(geom)),
+                     function(y){
+                       st_polygon(list(st_geometry(x)[[y]][[1]]))
+                     })
+    newGeom <-  st_sfc(newGeom, crs = st_crs(x)$proj4string)
+    filledGeom  <-  st_set_geometry(x, newGeom)
+    return(filledGeom)
+  }
+```
+
+Let's split our multipart polygon into single polygons then use our new function to fill the holes. After that we'll calculate the area of each polygon and select the largest.
+
+```{r Contiguous-Polygons}
+contiguousInfestation <-
+  eabRange2017 %>% 
+  st_cast("POLYGON") %>% 
+  st_fill_holes() %>%
+  mutate(area = st_area(.)) %>%
+  top_n(1, area)
+
+plot(st_geometry(contiguousInfestation))
+```
+
+## Make the first draft of a map
+Now we're ready to make a map. I know the title of this post says 'publication ready', but it's already quite long so we'll just put together a draft here. The next post will be about adding other features and finishing touches to make it a 'publication-quality' map. Remember when building up a map `ggplot2` adds layers in order, so those called first are placed on the bottom.
+
+```{r Map}
+ggplot() +
+  geom_raster(data = importanceValue,
+              aes(x = lon,
+                  y = lat,
+                  fill = importanceValue)) +
+  geom_sf(data = contiguousInfestation,
+          fill = NA,
+          color = "black",
+          size = 2) +
+  scale_fill_distiller(palette = "Greens") +
+  theme_minimal()
+```
+
+## Code to download data
+
+```{r Download-data, eval = FALSE}
+# The commented code downloads and unzips the raster containing the importance
+# value for black ash, species code 543
+
+download.file("https://www.fs.fed.us/nrs/atlas/littlefia/fiaiv543_gasc.zip",
+              "data/FIA_Importance.zip")
+unzip("data/FIA/FIA_Importance.zip",
+      exdir = "data/FIA")
+
+# Download and unzip the census division boundaries
+
+download.file("http://www12.statcan.gc.ca/census-recensement/2011/geo/bound-limit/files-fichiers/gcd_000b11a_e.zip",
+              "data/Canadian_Census.zip")
+unzip("data/Canadian_Census.zip",
+      exdir = "data/Canadian_Census")
+```
+
+##Data References
+Statistics Canada
+Census Division Cartographic Boundary Files - 2011 Census 
+http://open.canada.ca/data/en/dataset/cc2f27e3-b20f-4472-8a65-13bb7556a658
+Access Nov. 30, 2017
+
+EDDMapS. 2017. Early Detection & Distribution Mapping System. The University of Georgia - Center for Invasive Species and Ecosystem Health. Available online at http://www.eddmaps.org/; last accessed November 30, 2017.
