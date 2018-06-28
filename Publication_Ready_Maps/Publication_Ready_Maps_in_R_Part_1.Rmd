@@ -9,7 +9,7 @@ Shannon, et al (2018), [doi:10.3390/f9030147](https://doi.org/10.3390/f9030147)
 
 When I wrote this sentence I had a map in mind, and I decided it was about time to get maps in R figured out. A little more spcifically, I wanted to make a publication quality map in R. Maps, especially polished ones, are something I had been meaning to learn on R, but always seemed like too much a chore when I needed to get a map done right away. The rest of the publication was written via RMarkdown, so it made sense to do the map that way too. 
 
-I had previously used the `sp` package for spatial data analysis and plotting. I was never completely stratisfied with how `sp` integrated with my regular workflow, especially after I began to more heavily use the tidyverse.  Then in Fall 2018 I came across the package `sf`, which makes working with data, especially tidy data, simple, most of your regular workflow carries right over. So for these maps I'll be using `sf` and other tidy packages. I stuck with `ggplot2` for the plotting because I am already familiar with the syntax and some of the quirks.
+I had previously used the `sp` package for spatial data analysis and plotting. I was never completely stratisfied with how `sp` integrated with my regular workflow, especially after I began to more heavily use the tidyverse.  Then in Fall 2017 I came across the package `sf`, which makes working with data, especially tidy data, simple, most of your regular workflow carries right over. So for these maps I'll be using `sf` and other tidy packages. I stuck with `ggplot2` for the plotting because I am already familiar with the syntax and some of the quirks.
 
 ```{r Setup, message = FALSE}
 library(dplyr)
