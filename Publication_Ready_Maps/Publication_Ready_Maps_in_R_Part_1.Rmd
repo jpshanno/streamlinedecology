@@ -1,6 +1,12 @@
 ---
 output: html_document
 ---
+```{css echo = FALSE}
+body{
+  padding-bottom: 100px
+}
+```
+
 # Creating Publication-Ready Maps in R, Part 1
 
 > The northwestern periphery of the expanding infestation includes areas where black ash (Fraxinus nigra Marsh.) plays an important role on the landscape [7] (Figure 1).  
@@ -245,6 +251,8 @@ unzip("data/Canadian_Census.zip",
       exdir = "data/Canadian_Census")
 ```
 
+The R Markdown file to generate this page is available on [GitHub](https://github.com/jpshanno/tutorials/blob/master/Publication_Ready_Maps/Publication_Ready_Maps_in_R_Part_1.Rmd)
+
 ##Data References
 Statistics Canada
 Census Division Cartographic Boundary Files - 2011 Census 
@@ -252,3 +260,7 @@ http://open.canada.ca/data/en/dataset/cc2f27e3-b20f-4472-8a65-13bb7556a658
 Access Nov. 30, 2017
 
 EDDMapS. 2017. Early Detection & Distribution Mapping System. The University of Georgia - Center for Invasive Species and Ecosystem Health. Available online at http://www.eddmaps.org/; last accessed November 30, 2017.
+
+<div class = "footer" align = "center" style = "position:fixed; bottom:0; right:0; left:0; width:100%; padding:15px; box-sizing:border-box; background-color:#ffffff"> 
+<img src = "./logo.png" width = "150px" href = "https://www.streamlinedecology.com"></img>
+</div>
